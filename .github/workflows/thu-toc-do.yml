@@ -1,0 +1,49 @@
+name: Thu toc do SadTalker (CPU)
+on:
+  workflow_dispatch:
+    inputs:
+      kich_thuoc: { description: '256 hoac 512', default: '256' }
+      lam_net: { description: 'gfpgan hoac rong', default: 'gfpgan' }
+jobs:
+  quay:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.8' }
+      - name: Lay SadTalker + trong so (GitHub Releases)
+        run: |
+          set -e
+          git clone -q --depth 1 https://github.com/OpenTalker/SadTalker.git st
+          cd st
+          mkdir -p checkpoints gfpgan/weights
+          B=https://github.com/OpenTalker/SadTalker/releases/download
+          for f in mapping_00109-model.pth.tar mapping_00229-model.pth.tar SadTalker_V0.0.2_256.safetensors SadTalker_V0.0.2_512.safetensors; do
+            curl -sSL -o checkpoints/$f $B/v0.0.2-rc/$f; done
+          curl -sSL -o gfpgan/weights/alignment_WFLW_4HG.pth https://github.com/xinntao/facexlib/releases/download/v0.1.0/alignment_WFLW_4HG.pth
+          curl -sSL -o gfpgan/weights/detection_Resnet50_Final.pth https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_Resnet50_Final.pth
+          curl -sSL -o gfpgan/weights/GFPGANv1.4.pth https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth
+          curl -sSL -o gfpgan/weights/parsing_parsenet.pth https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/parsing_parsenet.pth
+          ls -la checkpoints gfpgan/weights
+      - name: Cai thu vien (CPU)
+        run: |
+          set -e
+          sudo apt-get -qq update && sudo apt-get -qq install -y ffmpeg espeak-ng >/dev/null
+          cd st
+          pip -q install torch==1.12.1+cpu torchvision==0.13.1+cpu torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cpu
+          pip -q install -r requirements.txt
+          python -c "import torch;print(torch.__version__, torch.get_num_threads())"
+      - name: Quay thu 10 giay
+        run: |
+          set -e
+          cd st
+          espeak-ng -v vi -s 140 -w /tmp/a.wav "Xin chào, tôi là trợ lý của GITA ba trăm sáu mươi lăm. Hôm nay chúng ta cùng nhau bắt đầu hành trình gia đình thịnh vượng, từng bước một, thật vững vàng."
+          ffprobe -v error -show_entries format=duration -of csv=p=0 /tmp/a.wav
+          EN=""; [ "${{ inputs.lam_net }}" = "gfpgan" ] && EN="--enhancer gfpgan"
+          T0=$(date +%s)
+          python inference.py --driven_audio /tmp/a.wav --source_image examples/source_image/full_body_1.png \
+            --result_dir /tmp/kq --still --preprocess full --size ${{ inputs.kich_thuoc }} $EN --cpu
+          echo "THOI_GIAN=$(( $(date +%s) - T0 ))s"
+          find /tmp/kq -name '*.mp4' -exec ls -la {} \;
+      - uses: actions/upload-artifact@v4
+        with: { name: video-thu, path: /tmp/kq/**/*.mp4 }
