@@ -31,6 +31,30 @@ jobs:
           echo "Can bat $N may"
           python3 -c 'import sys;n=max(0,min(20,int(sys.argv[1])));print("ds="+str(list(range(1,n+1))).replace(" ",""))' "$N" >> "$GITHUB_OUTPUT"
 
+  thu-rife:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Thu RIFE tren CPU
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mesa-vulkan-drivers unzip
+          curl -fsSL -o /tmp/rife.zip https://github.com/nihui/rife-ncnn-vulkan/releases/download/20221029/rife-ncnn-vulkan-20221029-ubuntu.zip
+          unzip -q /tmp/rife.zip -d /tmp/rife-src
+          cd /tmp/rife-src/rife-ncnn-vulkan-20221029-ubuntu
+          chmod +x rife-ncnn-vulkan
+          ICD=$(find /usr/share/vulkan/icd.d -name 'lvp*' | head -1)
+          echo "ICD=$ICD"
+          test -n "$ICD"
+          export VK_ICD_FILENAMES="$ICD" VK_DRIVER_FILES="$ICD"
+          ffmpeg -y -loglevel error -f lavfi -i "color=c=red:s=320x480" -frames:v 1 /tmp/a.jpg
+          ffmpeg -y -loglevel error -f lavfi -i "color=c=blue:s=320x480" -frames:v 1 /tmp/b.jpg
+          ./rife-ncnn-vulkan -0 /tmp/a.jpg -1 /tmp/b.jpg -o /tmp/giua.png -m rife-v4 -s 0.5
+          test -s /tmp/giua.png
+          echo "RIFE ok $(wc -c < /tmp/giua.png) byte"
+
   quay:
     needs: dem
     if: needs.dem.outputs.ds != '[]' && needs.dem.outputs.ds != ''
@@ -70,6 +94,16 @@ jobs:
           cd st
           pip -q install torch==1.12.1+cpu torchvision==0.13.1+cpu torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cpu
           pip -q install -r requirements.txt
+      - name: Lay RIFE
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mesa-vulkan-drivers unzip
+          curl -fsSL -o /tmp/rife.zip https://github.com/nihui/rife-ncnn-vulkan/releases/download/20221029/rife-ncnn-vulkan-20221029-ubuntu.zip
+          unzip -q /tmp/rife.zip -d /tmp/rife-src
+          mkdir -p "$HOME/rife"
+          cp -a /tmp/rife-src/rife-ncnn-vulkan-20221029-ubuntu/. "$HOME/rife/"
+          chmod +x "$HOME/rife/rife-ncnn-vulkan"
       - name: Nhan viec va quay
         env:
           KHOA: ${{ secrets.GITA_KHOA_XUONG_QUAY }}
@@ -91,7 +125,30 @@ jobs:
             fi
             RONG=0
             DU=$(echo "$J" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("duoiAnh") or "jpg")')
+            LOAI=$(echo "$J" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("loai") or "moi")')
             rm -rf /tmp/v; mkdir -p /tmp/v
+            if [ "$LOAI" = "cd" ]; then
+              DU2=$(echo "$J" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("duoiCd") or "jpg")')
+              if ! curl -fsS --max-time 120 -H "$H" -o "/tmp/v/a.$DU" "$API/quay/tep/$MA/anh" || \
+                 ! curl -fsS --max-time 120 -H "$H" -o "/tmp/v/b.$DU2" "$API/quay/tep/$MA/cd"; then
+                bao_loi "$MA" "Khong tai duoc hai khung." true; continue
+              fi
+              ICD=$(find /usr/share/vulkan/icd.d -name 'lvp*' | head -1)
+              export VK_ICD_FILENAMES="${ICD:-}" VK_DRIVER_FILES="${ICD:-}"
+              ffmpeg -y -loglevel error -i "/tmp/v/a.$DU" -vf "scale=576:1024:force_original_aspect_ratio=increase,crop=576:1024" /tmp/v/a.jpg
+              ffmpeg -y -loglevel error -i "/tmp/v/b.$DU2" -vf "scale=576:1024:force_original_aspect_ratio=increase,crop=576:1024" /tmp/v/b.jpg
+              mkdir -p /tmp/v/in /tmp/v/out
+              cp /tmp/v/a.jpg /tmp/v/in/00000001.jpg
+              cp /tmp/v/b.jpg /tmp/v/in/00000002.jpg
+              if "$HOME/rife/rife-ncnn-vulkan" -i /tmp/v/in -o /tmp/v/out -n 16 -m "$HOME/rife/rife-v4" > /tmp/v/nhat-ky 2>&1 \
+                 && ffmpeg -y -loglevel error -framerate 8 -i /tmp/v/out/%08d.png -c:v libx264 -preset veryfast -crf 18 \
+                      -pix_fmt yuv420p -movflags +faststart /tmp/v/ra.mp4; then
+                if curl -fsS --max-time 300 -X PUT -H "$H" -H "Content-Type: video/mp4" --data-binary @/tmp/v/ra.mp4 "$API/quay/kq/$MA" > /dev/null; then
+                  XONG=$((XONG+1)); echo "Xong 1 canh chuyen dong"
+                else bao_loi "$MA" "Nop ket qua khong duoc." true; fi
+              else bao_loi "$MA" "Khong noi duoc chuyen dong." true; fi
+              continue
+            fi
             if ! curl -fsS --max-time 120 -H "$H" -o "/tmp/v/vao.$DU" "$API/quay/tep/$MA/anh" || \
                ! curl -fsS --max-time 120 -H "$H" -o /tmp/v/am.wav "$API/quay/tep/$MA/am"; then
               bao_loi "$MA" "Khong tai duoc tep." true; continue
