@@ -33,14 +33,14 @@ jobs:
 
   thu-rife:
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
       - name: Thu RIFE tren CPU
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq mesa-vulkan-drivers unzip
+          sudo apt-get install -y -qq mesa-vulkan-drivers unzip ffmpeg
           curl -fsSL -o /tmp/rife.zip https://github.com/nihui/rife-ncnn-vulkan/releases/download/20221029/rife-ncnn-vulkan-20221029-ubuntu.zip
           unzip -q /tmp/rife.zip -d /tmp/rife-src
           cd /tmp/rife-src/rife-ncnn-vulkan-20221029-ubuntu
@@ -53,7 +53,16 @@ jobs:
           ffmpeg -y -loglevel error -f lavfi -i "color=c=blue:s=320x480" -frames:v 1 /tmp/b.jpg
           ./rife-ncnn-vulkan -0 /tmp/a.jpg -1 /tmp/b.jpg -o /tmp/giua.png -m rife-v4 -s 0.5
           test -s /tmp/giua.png
-          echo "RIFE ok $(wc -c < /tmp/giua.png) byte"
+          mkdir -p /tmp/in /tmp/out
+          cp /tmp/a.jpg /tmp/in/00000001.jpg
+          cp /tmp/b.jpg /tmp/in/00000002.jpg
+          ./rife-ncnn-vulkan -i /tmp/in -o /tmp/out -n 16 -m rife-v4
+          N=$(find /tmp/out -name '*.png' | wc -l)
+          echo "khung=$N"
+          test "$N" -ge 8
+          ffmpeg -y -loglevel error -framerate 8 -i /tmp/out/%08d.png -c:v libx264 -pix_fmt yuv420p /tmp/ra.mp4
+          test -s /tmp/ra.mp4
+          echo "RIFE ok $(wc -c < /tmp/ra.mp4) byte"
 
   quay:
     needs: dem
